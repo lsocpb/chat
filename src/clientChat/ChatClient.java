@@ -29,6 +29,7 @@ public class ChatClient extends JFrame implements ClientCallback {
     private ChatService chatService;
     private String username;
     private boolean connected = false;
+    private ClientCallback callbackStub;
 
     public ChatClient() {
         setTitle("RMI Chat Client");
@@ -36,6 +37,7 @@ public class ChatClient extends JFrame implements ClientCallback {
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout());
 
+        // Panel połączenia
         connectionPanel = new JPanel(new FlowLayout());
         connectionPanel.add(new JLabel("Serwer:"));
         serverField = new JTextField("localhost", 10);
@@ -46,14 +48,17 @@ public class ChatClient extends JFrame implements ClientCallback {
         connectButton = new JButton("Połącz");
         connectionPanel.add(connectButton);
 
+        // Panel główny
         JPanel mainPanel = new JPanel(new BorderLayout());
 
+        // Panel czatu
         chatPanel = new JPanel(new BorderLayout());
         chatArea = new JTextArea();
         chatArea.setEditable(false);
         scrollPane = new JScrollPane(chatArea);
         chatPanel.add(scrollPane, BorderLayout.CENTER);
 
+        // Panel listy użytkowników
         userList = new JList<>();
         userList.setPreferredSize(new Dimension(150, 0));
         JScrollPane userScrollPane = new JScrollPane(userList);
@@ -61,6 +66,7 @@ public class ChatClient extends JFrame implements ClientCallback {
         userPanel.add(new JLabel("Użytkownicy online:"), BorderLayout.NORTH);
         userPanel.add(userScrollPane, BorderLayout.CENTER);
 
+        // Panel wejściowy
         JPanel inputPanel = new JPanel(new BorderLayout());
         messageField = new JTextField();
         sendButton = new JButton("Wyślij");
@@ -74,16 +80,21 @@ public class ChatClient extends JFrame implements ClientCallback {
         add(connectionPanel, BorderLayout.NORTH);
         add(mainPanel, BorderLayout.CENTER);
 
+        // Początkowo panel czatu jest nieaktywny
         messageField.setEnabled(false);
         sendButton.setEnabled(false);
         userList.setEnabled(false);
 
+        // Listener dla przycisku połączenia
         connectButton.addActionListener(this::connect);
 
+        // Listener dla przycisku wysyłania
         sendButton.addActionListener(this::sendMessage);
 
+        // Listener dla pola tekstowego (Enter)
         messageField.addActionListener(this::sendMessage);
 
+        // Listener dla zamknięcia okna
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
@@ -105,13 +116,20 @@ public class ChatClient extends JFrame implements ClientCallback {
             }
 
             try {
+                // Ustawienie adresu dla klienta
+                System.setProperty("java.rmi.server.hostname", getLocalAddress());
+
+                // Pobranie rejestru RMI
                 Registry registry = LocateRegistry.getRegistry(server, 1099);
 
+                // Pobranie zdalnej referencji do obiektu
                 chatService = (ChatService) registry.lookup("ChatService");
 
-                ClientCallback callback = (ClientCallback) UnicastRemoteObject.exportObject(this, 0);
-                chatService.registerClient(username, callback);
+                // Rejestracja callbacka
+                callbackStub = (ClientCallback) UnicastRemoteObject.exportObject(this, 0);
+                chatService.registerClient(username, callbackStub);
 
+                // Aktualizacja UI
                 connected = true;
                 connectButton.setText("Rozłącz");
                 messageField.setEnabled(true);
@@ -131,11 +149,22 @@ public class ChatClient extends JFrame implements ClientCallback {
         }
     }
 
+    private String getLocalAddress() {
+        try {
+            return java.net.InetAddress.getLocalHost().getHostAddress();
+        } catch (Exception e) {
+            return "localhost";
+        }
+    }
+
     private void disconnect() {
         if (connected) {
             try {
                 chatService.unregisterClient(username);
-                UnicastRemoteObject.unexportObject(this, true);
+                if (callbackStub != null) {
+                    UnicastRemoteObject.unexportObject(this, true);
+                    callbackStub = null;
+                }
 
                 // Aktualizacja UI
                 connected = false;
@@ -172,6 +201,7 @@ public class ChatClient extends JFrame implements ClientCallback {
     public void receiveMessage(Message message) throws RemoteException {
         SwingUtilities.invokeLater(() -> {
             chatArea.append(message.toString() + "\n");
+            // Automatyczne przewijanie na dół
             chatArea.setCaretPosition(chatArea.getDocument().getLength());
         });
     }
