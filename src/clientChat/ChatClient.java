@@ -1,18 +1,20 @@
 package clientChat;
 
 import modelChat.Message;
+import rmiChat.ChatService;
+import rmiChat.ClientCallback;
 
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
-import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
-import java.net.Socket;
+import java.rmi.RemoteException;
+import java.rmi.registry.LocateRegistry;
+import java.rmi.registry.Registry;
+import java.rmi.server.UnicastRemoteObject;
 
-public class ChatClient extends JFrame {
+public class ChatClient extends JFrame implements ClientCallback {
     private JTextField messageField;
     private JTextArea chatArea;
     private JButton sendButton;
@@ -22,20 +24,18 @@ public class ChatClient extends JFrame {
     private JTextField serverField;
     private JPanel connectionPanel;
     private JPanel chatPanel;
+    private JList<String> userList;
 
-    private Socket socket;
-    private ObjectOutputStream outputStream;
-    private ObjectInputStream inputStream;
+    private ChatService chatService;
     private String username;
     private boolean connected = false;
 
     public ChatClient() {
-        setTitle("Chat Client");
-        setSize(500, 400);
+        setTitle("RMI Chat Client");
+        setSize(700, 500);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout());
 
-        // Panel połączenia
         connectionPanel = new JPanel(new FlowLayout());
         connectionPanel.add(new JLabel("Serwer:"));
         serverField = new JTextField("localhost", 10);
@@ -46,37 +46,44 @@ public class ChatClient extends JFrame {
         connectButton = new JButton("Połącz");
         connectionPanel.add(connectButton);
 
-        // Panel czatu
+        JPanel mainPanel = new JPanel(new BorderLayout());
+
         chatPanel = new JPanel(new BorderLayout());
         chatArea = new JTextArea();
         chatArea.setEditable(false);
         scrollPane = new JScrollPane(chatArea);
         chatPanel.add(scrollPane, BorderLayout.CENTER);
 
+        userList = new JList<>();
+        userList.setPreferredSize(new Dimension(150, 0));
+        JScrollPane userScrollPane = new JScrollPane(userList);
+        JPanel userPanel = new JPanel(new BorderLayout());
+        userPanel.add(new JLabel("Użytkownicy online:"), BorderLayout.NORTH);
+        userPanel.add(userScrollPane, BorderLayout.CENTER);
+
         JPanel inputPanel = new JPanel(new BorderLayout());
         messageField = new JTextField();
         sendButton = new JButton("Wyślij");
         inputPanel.add(messageField, BorderLayout.CENTER);
         inputPanel.add(sendButton, BorderLayout.EAST);
-        chatPanel.add(inputPanel, BorderLayout.SOUTH);
+
+        mainPanel.add(chatPanel, BorderLayout.CENTER);
+        mainPanel.add(userPanel, BorderLayout.EAST);
+        mainPanel.add(inputPanel, BorderLayout.SOUTH);
 
         add(connectionPanel, BorderLayout.NORTH);
-        add(chatPanel, BorderLayout.CENTER);
+        add(mainPanel, BorderLayout.CENTER);
 
-        // Początkowo panel czatu jest nieaktywny
         messageField.setEnabled(false);
         sendButton.setEnabled(false);
+        userList.setEnabled(false);
 
-        // Listener dla przycisku połączenia
         connectButton.addActionListener(this::connect);
 
-        // Listener dla przycisku wysyłania
         sendButton.addActionListener(this::sendMessage);
 
-        // Listener dla pola tekstowego (Enter)
         messageField.addActionListener(this::sendMessage);
 
-        // Listener dla zamknięcia okna
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
@@ -98,28 +105,24 @@ public class ChatClient extends JFrame {
             }
 
             try {
-                socket = new Socket(server, 12345);
-                outputStream = new ObjectOutputStream(socket.getOutputStream());
-                inputStream = new ObjectInputStream(socket.getInputStream());
+                Registry registry = LocateRegistry.getRegistry(server, 1099);
 
-                // Wysłanie pierwszej wiadomości z nazwą użytkownika
-                Message message = new Message(username, "dołączył do czatu");
-                outputStream.writeObject(message);
+                chatService = (ChatService) registry.lookup("ChatService");
 
-                // Uruchomienie wątku do odbierania komunikatów
-                new Thread(this::receiveMessages).start();
+                ClientCallback callback = (ClientCallback) UnicastRemoteObject.exportObject(this, 0);
+                chatService.registerClient(username, callback);
 
-                // Aktualizacja UI
                 connected = true;
                 connectButton.setText("Rozłącz");
                 messageField.setEnabled(true);
                 sendButton.setEnabled(true);
                 usernameField.setEnabled(false);
                 serverField.setEnabled(false);
+                userList.setEnabled(true);
 
                 chatArea.append("Połączono z serwerem " + server + "\n");
 
-            } catch (IOException ex) {
+            } catch (Exception ex) {
                 JOptionPane.showMessageDialog(this, "Błąd połączenia: " + ex.getMessage());
                 ex.printStackTrace();
             }
@@ -131,12 +134,8 @@ public class ChatClient extends JFrame {
     private void disconnect() {
         if (connected) {
             try {
-                // Wysłanie wiadomości o opuszczeniu czatu
-                Message message = new Message(username, "opuścił czat");
-                outputStream.writeObject(message);
-
-                // Zamknięcie połączenia
-                socket.close();
+                chatService.unregisterClient(username);
+                UnicastRemoteObject.unexportObject(this, true);
 
                 // Aktualizacja UI
                 connected = false;
@@ -145,10 +144,11 @@ public class ChatClient extends JFrame {
                 sendButton.setEnabled(false);
                 usernameField.setEnabled(true);
                 serverField.setEnabled(true);
+                userList.setEnabled(false);
 
                 chatArea.append("Rozłączono z serwerem\n");
 
-            } catch (IOException e) {
+            } catch (Exception e) {
                 e.printStackTrace();
             }
         }
@@ -159,39 +159,28 @@ public class ChatClient extends JFrame {
         if (!content.isEmpty() && connected) {
             try {
                 Message message = new Message(username, content);
-                outputStream.writeObject(message);
+                chatService.broadcastMessage(message);
                 messageField.setText("");
-                chatArea.append("Ty: " + content + "\n");
-            } catch (IOException ex) {
+            } catch (Exception ex) {
                 JOptionPane.showMessageDialog(this, "Błąd wysyłania: " + ex.getMessage());
                 ex.printStackTrace();
             }
         }
     }
 
-    private void receiveMessages() {
-        try {
-            while (connected) {
-                Message message = (Message) inputStream.readObject();
-                SwingUtilities.invokeLater(() -> {
-                    chatArea.append(message.toString() + "\n");
-                    // Automatyczne przewijanie na dół
-                    chatArea.setCaretPosition(chatArea.getDocument().getLength());
-                });
-            }
-        } catch (IOException | ClassNotFoundException e) {
-            if (connected) {
-                SwingUtilities.invokeLater(() -> {
-                    chatArea.append("Utracono połączenie z serwerem\n");
-                    connected = false;
-                    connectButton.setText("Połącz");
-                    messageField.setEnabled(false);
-                    sendButton.setEnabled(false);
-                    usernameField.setEnabled(true);
-                    serverField.setEnabled(true);
-                });
-            }
-        }
+    @Override
+    public void receiveMessage(Message message) throws RemoteException {
+        SwingUtilities.invokeLater(() -> {
+            chatArea.append(message.toString() + "\n");
+            chatArea.setCaretPosition(chatArea.getDocument().getLength());
+        });
+    }
+
+    @Override
+    public void updateUserList(String[] users) throws RemoteException {
+        SwingUtilities.invokeLater(() -> {
+            userList.setListData(users);
+        });
     }
 
     public static void main(String[] args) {
