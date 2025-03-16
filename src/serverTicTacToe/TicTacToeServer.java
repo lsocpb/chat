@@ -1,31 +1,31 @@
-package serverChat;
+package serverTicTacToe;
 
-import rmiChat.ChatService;
-import rmiChat.ChatServiceImpl;
+import rmiTicTacToe.TicTacToeService;
+import rmiTicTacToe.TicTacToeServiceImpl;
 
 import java.net.InetAddress;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 
-public class ChatServer {
+public class TicTacToeServer {
     public static void main(String[] args) {
         try {
             // Automatyczne określenie adresu IP
             String ip = InetAddress.getLocalHost().getHostAddress();
 
             // Ustawienie właściwości systemowych
-            System.setProperty("java.rmi.server.hostname", "192.168.100.7");
+            System.setProperty("java.rmi.server.hostname", ip);
 
             // Utworzenie instancji serwisu
-            ChatService service = new ChatServiceImpl();
+            TicTacToeService service = new TicTacToeServiceImpl();
 
             // Tworzenie rejestru RMI
             Registry registry = LocateRegistry.createRegistry(1099);
 
             // Rejestracja serwisu w rejestrze
-            registry.rebind("ChatService", service);
+            registry.rebind("TicTacToeService", service);
 
-            System.out.println("Serwer RMI został uruchomiony.");
+            System.out.println("Serwer RMI gry 'Kółko i krzyżyk' został uruchomiony.");
             System.out.println("Adres IP serwera: " + ip);
 
         } catch (Exception e) {
